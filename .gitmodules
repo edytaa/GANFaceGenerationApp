@@ -1,0 +1,3 @@
+[submodule "stylegan2"]
+	path = stylegan2
+	url = /Users/Edyta/PycharmProjects/StreamlitFirstApp/stylegan2
