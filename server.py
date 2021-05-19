@@ -13,13 +13,11 @@ sys.path.append(path_stylegan)
 import pretrained_networks
 import dnnlib
 import dnnlib.tflib as tflib
-from random import randint
 
 context = zmq.Context()
 socket = context.socket(zmq.REP)
 socket.bind("tcp://*:5555")
 
-participant_id = randint(0, 1000)
 participant_dir = basePth + r'stimuli/'  # f'stimuli/{participant_id}/'
 destinDir = participant_dir + 'images/'  # path to folder for storing images
 if not os.path.exists(destinDir):
@@ -50,9 +48,9 @@ print("Server initialised - waiting for a client")
 
 def gen_images(allZ_, gen_):
     for tt in range(allZ_.shape[0]):
-        thsTrlPth = destinDir + 'trl_' + str(gen_) + "_" + str(tt) + '.png'
+        thsTrlPth = participant_dir + 'trl_' + str(gen_) + "_" + str(tt) + '.png'  # FIXME: remove all globals (e.g. participant_dir)
         print(f'Generating image  {tt} for generation {gen_} ...')
-        z = allZ[np.newaxis, tt, :]
+        z = allZ_[np.newaxis, tt, :]
         tflib.set_vars({var: rnd.randn(*var.shape.as_list()) for var in noise_vars})  # [height, width]
         images = Gs.run(z, None, **Gs_kwargs)  # [minibatch, height, width, channel]
         PIL.Image.fromarray(images[0], 'RGB').save(thsTrlPth)
@@ -133,7 +131,6 @@ def save_generation_info(gen, allZ_, grades, participant_path):
     with open(participant_path+f'allZ_gen_{gen}.pkl', 'wb') as fd:
         pickle.dump(allZ_, fd)
 
-
 gen_rates = []
 
 while True:
@@ -143,12 +140,16 @@ while True:
     message = request.decode("utf-8")  # request as a string
     state = message.split(' ')[1]  # get state of the app (True or False)
     rate = message.split(' ')[3]  # get rate from the previous trial (None or 1-9)
-    print(f'grade: {rate}, {type(rate)}')
+    participant_id = message.split(' ')[5]  # get rate from the previous trial (None or 1-9)
+    participant_dir = basePth + f'stimuli/{participant_id}/'
+    if not os.path.exists(participant_dir):
+        os.makedirs(participant_dir)
+    print(f'userID: {participant_id}')
+
     if rate != "None":
         rate = int(rate)
-        print(f'grade: {rate}, {bytes(rate)}, {type(rate)}')
-        #rate = int.from_bytes(rate, "little")
         gen_rates.append(rate)
+
     print(f'current grades: {gen_rates}')
 
     # start a new experiment
