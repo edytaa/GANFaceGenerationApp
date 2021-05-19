@@ -5,6 +5,7 @@ import sys
 import csv
 import os
 import pickle
+from os import walk
 
 basePth = r'/home/edytak/Documents/GAN_project/code/'
 path_stylegan = basePth + r'stylegan2'
@@ -25,12 +26,12 @@ if not os.path.exists(destinDir):
 
 seed = 3004
 rnd = np.random.RandomState(seed)
-nTrl = 5  # number of trials
-nGen = 2  # number of generations
-trial = -1
-gen = 0
-nSurv = 1 # number of best samples that survives the grading process (and prob goes to next generation)
-nRnd = 1
+nTrl = 50  # number of trials
+nGen = 100  # number of generations
+nSurv = 10  # number of best samples that survives the grading process (and prob goes to next generation)
+nRnd = 10
+trial = -1  # current trial
+gen = 0  # current generation
 
 network_pkl = 'gdrive:networks/stylegan2-ffhq-config-f.pkl'
 G, D, Gs = pretrained_networks.load_networks(network_pkl)
@@ -142,8 +143,18 @@ while True:
     rate = message.split(' ')[3]  # get rate from the previous trial (None or 1-9)
     participant_id = message.split(' ')[5]  # get rate from the previous trial (None or 1-9)
     participant_dir = basePth + f'stimuli/{participant_id}/'
+    resume_sesion = False
     if not os.path.exists(participant_dir):
         os.makedirs(participant_dir)
+    else:
+        # This should be moved to function
+        _, _, filenames = next(walk(participant_dir))
+        past_generations = [int(f[9:-4]) for f in filenames if '.pkl' in f]  # 'allZ_gen_290.pkl' -> 9 letters is 'allZ_gen_', -4 is '.pkl'
+        last_full_generation = max(past_generations)
+        pickle_with_allZ = participant_dir + f'allZ_gen_{last_full_generation}.pkl'
+        allZ = pickle.load(open(pickle_with_allZ, "rb"))
+        resume_sesion = True
+
     print(f'userID: {participant_id}')
 
     if rate != "None":
@@ -155,9 +166,12 @@ while True:
     # start a new experiment
     if state == "True":
         print("Starting a new experiment...")
-        allZ = np.random.randn(nTrl, 512)
+        if not resume_sesion:
+            allZ = np.random.randn(nTrl, 512)
+            gen = 0
+        else:
+            gen = last_full_generation + 1
         trial = 0
-        gen = 0
         gen_images(allZ, gen)
         gen_rates = []
 
