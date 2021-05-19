@@ -20,12 +20,14 @@ def main():
     # button to start a new session (for testing)
     new_session_button = st.sidebar.button('New session')
 
-    # widget for rating
-    option = st.sidebar.radio("Rate the image",
-                              ('1', '2', '3', '4', '5', '6', '7', '8', '9'),
-                              index=0)
+    grades_button_values = []
+    grade_range = 10
+    for button_val in range(grade_range):
+        grades_button_values.append(st.sidebar.button(str(button_val)))
+    #option = [i for i in range(grade_range) if grades_button_values[i]][0]
+    option = [idx for idx, state in enumerate(grades_button_values) if state]
 
-  #  option = st.sidebar.number_input('Rate the image', min_value=1, max_value=9)
+    option = option[0] if len(option) else 0
 
     # reset a session
     if new_session_button or init_run:
@@ -42,7 +44,7 @@ def main():
     elif not init_run:
         message_sent = message.format(reset='False', rate=option)  # send session state and rating
         socket.send(bytes(message_sent, 'utf-8'))
-
+        st.write(f'Previous image rated with: {option}')
         received = socket.recv_multipart()  # get trial number and generation
         trial = int.from_bytes(received[0], "little")  # bytes to int
         generation = int.from_bytes(received[1], "little")
