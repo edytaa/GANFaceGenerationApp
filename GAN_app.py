@@ -16,7 +16,7 @@ def main():
     st.title("GAN App")
 
     expander = st.sidebar.beta_expander("Enter your participant ID")
-    user_id = expander.text_input("Participant ID", 1905)
+    user_id = expander.text_input("Participant ID", 2405)
     st.sidebar.write(f'Participant ID: {user_id}')
 
     message = "Reset: {reset} Rate: {rate} UserID: {userID}"  # template for message for communication with server

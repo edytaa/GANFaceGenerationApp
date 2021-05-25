@@ -15,6 +15,8 @@ import pretrained_networks
 import dnnlib
 import dnnlib.tflib as tflib
 
+TESTING = True
+
 context = zmq.Context()
 socket = context.socket(zmq.REP)
 socket.bind("tcp://*:5555")
@@ -24,12 +26,19 @@ destinDir = participant_dir + 'images/'  # path to folder for storing images
 if not os.path.exists(destinDir):
     os.makedirs(destinDir)
 
-seed = 3004
-rnd = np.random.RandomState(seed)
-nTrl = 50  # number of trials
-nGen = 100  # number of generations
-nSurv = 10  # number of best samples that survives the grading process (and prob goes to next generation)
-nRnd = 10
+if TESTING:
+    seed = 3004
+    rnd = np.random.RandomState(seed)
+    nTrl = 6  # number of trials
+    nGen = 10  # number of generations
+    nSurv = 2  # number of best samples that survives the grading process (and prob goes to next generation)
+    nRnd = 2
+else:
+    rnd = np.random.RandomState()
+    nTrl = 50  # number of trials
+    nGen = 100  # number of generations
+    nSurv = 10  # number of best samples that survives the grading process (and prob goes to next generation)
+    nRnd = 10
 trial = -1  # current trial
 gen = 0  # current generation
 
@@ -57,8 +66,6 @@ def gen_images(allZ_, gen_):
         PIL.Image.fromarray(images[0], 'RGB').save(thsTrlPth)
 
 
-#def evaluateOneGeneration(nTrl_, nSurv_, nRnd_, gen_, wFitterParent_,
-#                          basePth_, allZ_, ratings_, mutAmp=.4, mutP=.3):
 def evaluateOneGeneration(allZ_, ratings_, gen_, nTrl_, nSurv_, nRnd_, basePth_=None, wFitterParent_=0.75, mutAmp=.4, mutP=.3):
     """
 
@@ -90,26 +97,33 @@ def evaluateOneGeneration(allZ_, ratings_, gen_, nTrl_, nSurv_, nRnd_, basePth_=
     # take latent vectors of nSurvival highest responses
     thsIndices = np.argsort(thsFitness)
     thsSurv = allZ_[thsIndices[-nSurv_:], :]
+    parents_survival = [(p, -1, '>') for p in thsIndices[-nSurv_:]]
+    print(f'grades: {thsResp} \n thsFitness: {thsFitness} \n thsIndices {thsIndices}, \n parents_survival: {parents_survival} \n\n')
 
     # generate recombinations from 2 parent latent vectors of current gen
     # w. fitness proportional to probability of being parent
     # parent with higher fitness contributes more
     thsPool = np.zeros([nInPool, allZ_.shape[1]])
 
+    parents_mixed = []
     for rr in range(nInPool):
         thsParents = np.random.choice(nTrl_, 2, False, thsFitness)
 
         if thsFitness[thsParents[0]] > thsFitness[thsParents[1]]:
             contrib0 = wFitterParent_
             contrib1 = 1 - wFitterParent_
+            contribution_ = '>'
         elif thsFitness[thsParents[0]] < thsFitness[thsParents[1]]:
             contrib0 = 1 - wFitterParent_
             contrib1 = wFitterParent_
+            contribution_ = '<'
         elif thsFitness[thsParents[0]] == thsFitness[thsParents[1]]:
             contrib0 = .5
             contrib1 = .5
+            contribution_ = '='
 
         thsPool[rr, :] = allZ_[thsParents[0], :] * contrib0 + allZ_[thsParents[1], :] * contrib1
+        parents_mixed.append((int(thsParents[0]), int(thsParents[1]), contribution_))
 
     # each latent dimension of children in recombined pool has some probability of mutation
     toEdit = np.random.choice([0, 1], (nInPool, thsPool.shape[1]), True, [1 - mutP, mutP])  # mutP global
@@ -118,12 +132,17 @@ def evaluateOneGeneration(allZ_, ratings_, gen_, nTrl_, nSurv_, nRnd_, basePth_=
 
     # add some random faces to the mix
     thsRnd = np.random.randn(nRnd_, 512)
+    parents_random = [(-1, -1, '=') for _ in range(nRnd_)]
 
     # combine direct survivals and recombined / mutated pool
     allZ_ = np.concatenate((thsSurv, thsPool, thsRnd), axis=0)
+    parents_all = np.array(parents_survival + parents_mixed + parents_random)
     # shuffle order of trials
-    np.random.shuffle(allZ_)
-    return allZ_
+    shuffle_idx = list(range(allZ_.shape[0]))
+    np.random.shuffle(shuffle_idx)
+    allZ_ = allZ_[shuffle_idx, :]
+    parents_all = parents_all[shuffle_idx]
+    return allZ_, parents_all
 
 def save_generation_info(gen, allZ_, grades, participant_path):
     with open(participant_path+r'grades.csv', 'a') as fd:
@@ -131,6 +150,12 @@ def save_generation_info(gen, allZ_, grades, participant_path):
         write.writerow(grades)
     with open(participant_path+f'allZ_gen_{gen}.pkl', 'wb') as fd:
         pickle.dump(allZ_, fd)
+
+
+def save_creation_info(parents_info_, participant_path):
+    with open(participant_path+r'parents.csv', 'a') as fd:
+        write = csv.writer(fd)
+        write.writerow(parents_info_)
 
 gen_rates = []
 
@@ -150,10 +175,12 @@ while True:
         # This should be moved to function
         _, _, filenames = next(walk(participant_dir))
         past_generations = [int(f[9:-4]) for f in filenames if '.pkl' in f]  # 'allZ_gen_290.pkl' -> 9 letters is 'allZ_gen_', -4 is '.pkl'
-        last_full_generation = max(past_generations)
-        pickle_with_allZ = participant_dir + f'allZ_gen_{last_full_generation}.pkl'
-        allZ = pickle.load(open(pickle_with_allZ, "rb"))
-        resume_sesion = True
+        if len(past_generations):
+            last_full_generation = max(past_generations) if len(past_generations) else -1
+            pickle_with_allZ = participant_dir + f'allZ_gen_{last_full_generation}.pkl'
+            allZ_glob = pickle.load(open(pickle_with_allZ, "rb"))
+            resume_sesion = True
+    print(f'resume_sesion: {resume_sesion} (load old allZ)')
 
     print(f'userID: {participant_id}')
 
@@ -167,21 +194,22 @@ while True:
     if state == "True":
         print("Starting a new experiment...")
         if not resume_sesion:
-            allZ = np.random.randn(nTrl, 512)
+            allZ_glob = np.random.randn(nTrl, 512)
             gen = 0
         else:
             gen = last_full_generation + 1
         trial = 0
-        gen_images(allZ, gen)
+        gen_images(allZ_glob, gen)
         gen_rates = []
 
     #  change generation
     elif trial == nTrl-1:
         trial = 0
-        save_generation_info(gen, allZ, gen_rates, participant_dir)
-        allZ = evaluateOneGeneration(allZ, gen_rates, gen, nTrl_=nTrl, nSurv_=nSurv, nRnd_=nRnd)
+        save_generation_info(gen, allZ_glob, gen_rates, participant_dir)
+        allZ_glob, parents_info = evaluateOneGeneration(allZ_glob, gen_rates, gen, nTrl_=nTrl, nSurv_=nSurv, nRnd_=nRnd)
+        save_creation_info(parents_info, participant_dir)
         gen += 1
-        gen_images(allZ, gen)
+        gen_images(allZ_glob, gen)
         gen_rates = []
 
     else:
