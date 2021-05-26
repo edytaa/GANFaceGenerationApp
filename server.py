@@ -64,7 +64,10 @@ class Server:
 
         print("Server initialised - waiting for a client")
 
-    def gen_images(self):
+    def gen_images(self, participant_id):
+        participant_dir = self.get_participant_path(participant_id)
+        with open(participant_dir+f'allZ_gen_{self.gen}.pkl', 'wb') as fd:
+            pickle.dump(self.allZ, fd)
         for tt in range(self.allZ.shape[0]):
             thsTrlPth = participant_dir + 'trl_' + str(self.gen) + "_" + str(tt) + '.png'  # FIXME: remove all globals (e.g. participant_dir)
             print(f'Generating image  {tt} for generation {self.gen} ...')
@@ -139,13 +142,11 @@ class Server:
         #self.allZ = self.allZ[shuffle_idx, :]
         #self.parents_info = self.parents_info[shuffle_idx]
 
-    def save_generation_info(self, grades, participant_id):
+    def save_generation_info(self, participant_id):
         participant_path = self.get_participant_path(participant_id)
         with open(participant_path+r'grades.csv', 'a') as fd:
             write = csv.writer(fd)
-            write.writerow(grades)
-        with open(participant_path+f'allZ_gen_{self.gen}.pkl', 'wb') as fd:
-            pickle.dump(self.allZ, fd)
+            write.writerow(self.rates)
 
     def save_creation_info(self, participant_id):
         participant_path = self.get_participant_path(participant_id)
@@ -176,7 +177,7 @@ class Server:
         participant_dir = self.get_participant_path(participant_id)
         return os.path.exists(participant_dir)
 
-    def new_participant(self, generate_folder=True):
+    def new_participant(self, participant_id, generate_folder=True):
         if generate_folder:
             participant_dir = self.get_participant_path(participant_id)
             os.makedirs(participant_dir)
@@ -194,77 +195,50 @@ class Server:
             pickle_with_allZ = participant_dir + f'allZ_gen_{last_full_generation}.pkl'
             self.allZ = pickle.load(open(pickle_with_allZ, "rb"))
             self.trial = 0
-            self.gen = last_full_generation + 1
+            self.gen = last_full_generation
         else:  # there is a folder but empty
-            self.new_participant(generate_folder=False)
+            self.new_participant(participant_id, generate_folder=False)
 
     def switch_generations(self, participant_id):
-        self.save_generation_info(gen_rates, participant_id)
-        self.evaluateOneGeneration(gen_rates)
+        self.save_generation_info(participant_id)
+        self.evaluateOneGeneration()
         self.save_creation_info(participant_id)
         self.trial = 0
         self.gen += 1
         self.rates = []
         self.parents_info = []
-        self.gen_images()
+        self.gen_images(participant_id)
 
     def switch_trials(self):
         self.trial += 1
 
 
-session = Server()  # initialise class object
+def main():
+    session = Server()  # initialise class object
 
-while True:
-    #  Wait for next request from client
-    request = socket.recv()
-    print("Received request: %s" % request)  # print request in terminal
-    state, rate, participant_id = session.decode_msg(request)
-    participant_dir = basePth + f'stimuli/{participant_id}/'
-    resume_session = False
-    if not os.path.exists(participant_dir):
-        os.makedirs(participant_dir)
-    else:
-        # This should be moved to function
-        _, _, filenames = next(walk(participant_dir))
-        past_generations = [int(f[9:-4]) for f in filenames if '.pkl' in f]  # 'allZ_gen_290.pkl' -> 9 letters is 'allZ_gen_', -4 is '.pkl'
-        if len(past_generations):
-            last_full_generation = max(past_generations) if len(past_generations) else -1
-            pickle_with_allZ = participant_dir + f'allZ_gen_{last_full_generation}.pkl'
-            session.allZ = pickle.load(open(pickle_with_allZ, "rb"))
-            resume_session = True
-    print(f'resume_session: {resume_session} (load old allZ)')
+    while True:
+        #  Wait for next request from client
+        request = socket.recv()
+        print("Received request: %s" % request)  # print request in terminal
+        state, rate, participant_id_ = session.decode_msg(request)
+        print(f'received info: state {state}, rate {rate}, participant_id {participant_id_}')
 
-    print(f'userID: {participant_id}')
-
-    if rate is not None:
-        gen_rates.append(rate)
-
-    print(f'current grades: {gen_rates}')
-
-    # start a new experiment
-    if state:
-        print("Starting a new experiment...")
-        if not resume_session:
-            session.gen = 0
+        if state:  # request of new sesion or typed new participant id
+            if not session.check_if_participant_exists(participant_id_):
+                session.new_participant(participant_id_)
+            else:
+                session.resume_session(participant_id_)
+            session.gen_images(participant_id_)
+            session.rates = []
         else:
-            session.gen = last_full_generation + 1
-        session.trial = 0
-        session.gen_images()
-        gen_rates = []
+            session.rates.append(rate)
+            if session.trial == session.nTrl - 1:
+                session.switch_generations(participant_id_)
+            else:
+                session.switch_trials()
+        print(f'info send: trial: {session.trial}, gen: {session.gen}')
+        socket.send_multipart([bytes([session.trial]), bytes([session.gen])])
 
-    #  change generation
-    elif session.trial == session.nTrl-1:
-        session.trial = 0
-        session.save_generation_info(gen_rates, participant_dir)
-        session.evaluateOneGeneration(gen_rates)
-        session.save_creation_info(participant_dir)
-        session.gen += 1
-        session.gen_images()
-        gen_rates = []
 
-    else:
-        #  Send reply back to client
-        session.trial += 1
-
-    print(f'Trial: {session.trial}')
-    socket.send_multipart([bytes([session.trial]), bytes([session.gen])])
+if __name__ == "__main__":
+    main()
