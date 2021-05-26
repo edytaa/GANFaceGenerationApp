@@ -46,7 +46,8 @@ class Server:
         self.allZ = np.random.randn(self.nTrl, 512)
         self.initialise_network()
         self.nInPool = self.nTrl - self.nSurv - self.nRnd
-        self.parents_all = None
+        self.parents_info = None
+        self.rates = []
 
     def initialise_network(self):
         network_pkl = 'gdrive:networks/stylegan2-ffhq-config-f.pkl'
@@ -72,14 +73,14 @@ class Server:
             images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
             PIL.Image.fromarray(images[0], 'RGB').save(thsTrlPth)
 
-    def evaluateOneGeneration(self, ratings_, wFitterParent_=0.75, mutAmp=.4, mutP=.3):
+    def evaluateOneGeneration(self, wFitterParent_=0.75, mutAmp=.4, mutP=.3):
         """
         :param wFitterParent_: "power" of the higher graded parent picture
         :param ratings_: last generation grades (list)
         :param mutAmp:  ?
         :param mutP: ?
         """
-        thsResp = ratings_
+        thsResp = self.rates
 
         def softmax(x):
             e_x = np.exp(x - np.max(x))
@@ -131,24 +132,26 @@ class Server:
         # combine direct survivals and recombined / mutated pool
         self.allZ_backup = self.allZ.copy()
         self.allZ = np.concatenate((thsSurv, thsPool, thsRnd), axis=0)
-        self.parents_all = np.array(parents_survival + parents_mixed + parents_random)
+        self.parents_info = np.array(parents_survival + parents_mixed + parents_random)
         # shuffle order of trials
         shuffle_idx = list(range(self.allZ.shape[0]))
         np.random.shuffle(shuffle_idx)
         #self.allZ = self.allZ[shuffle_idx, :]
-        #self.parents_all = self.parents_all[shuffle_idx]
+        #self.parents_info = self.parents_info[shuffle_idx]
 
-    def save_generation_info(self, grades, participant_path):
+    def save_generation_info(self, grades, participant_id):
+        participant_path = self.get_participant_path(participant_id)
         with open(participant_path+r'grades.csv', 'a') as fd:
             write = csv.writer(fd)
             write.writerow(grades)
         with open(participant_path+f'allZ_gen_{self.gen}.pkl', 'wb') as fd:
             pickle.dump(self.allZ, fd)
 
-    def save_creation_info(self, participant_path):
+    def save_creation_info(self, participant_id):
+        participant_path = self.get_participant_path(participant_id)
         with open(participant_path+r'parents.csv', 'a') as fd:
             write = csv.writer(fd)
-            write.writerow(self.parents_all)
+            write.writerow(self.parents_info)
 
     def decode_msg(self, request) -> tuple:
         message = request.decode("utf-8")  # request as a string
@@ -164,23 +167,51 @@ class Server:
 
         return (state, rate, participant_id)  # parsed message
 
-    def check_if_participant_exists(self) -> bool:
-        return False
+    @staticmethod
+    def get_participant_path(participant_id):
+        global basePth
+        return basePth + f'stimuli/{participant_id}/'
 
-    def reset_session(self):
-        pass
+    def check_if_participant_exists(self, participant_id) -> bool:
+        participant_dir = self.get_participant_path(participant_id)
+        return os.path.exists(participant_dir)
 
-    def resume_session(self):
-        pass
+    def new_participant(self, generate_folder=True):
+        if generate_folder:
+            participant_dir = self.get_participant_path(participant_id)
+            os.makedirs(participant_dir)
+        self.gen = 0
+        self.trial = 0
+        self.allZ = np.random.randn(self.nTrl, 512)
 
-    def handle_new_generation(self):
-        pass
+    def resume_session(self, participant_id):
+        participant_dir = self.get_participant_path(participant_id)
+        _, _, filenames = next(walk(participant_dir))
+        past_generations = [int(f[9:-4]) for f in filenames if
+                            '.pkl' in f]  # 'allZ_gen_290.pkl' -> 9 letters is 'allZ_gen_', -4 is '.pkl'
+        if len(past_generations):
+            last_full_generation = max(past_generations)
+            pickle_with_allZ = participant_dir + f'allZ_gen_{last_full_generation}.pkl'
+            self.allZ = pickle.load(open(pickle_with_allZ, "rb"))
+            self.trial = 0
+            self.gen = last_full_generation + 1
+        else:  # there is a folder but empty
+            self.new_participant(generate_folder=False)
 
-    def handle_next_trial(self):
-        pass
+    def switch_generations(self, participant_id):
+        self.save_generation_info(gen_rates, participant_id)
+        self.evaluateOneGeneration(gen_rates)
+        self.save_creation_info(participant_id)
+        self.trial = 0
+        self.gen += 1
+        self.rates = []
+        self.parents_info = []
+        self.gen_images()
+
+    def switch_trials(self):
+        self.trial += 1
 
 
-gen_rates = []
 session = Server()  # initialise class object
 
 while True:
