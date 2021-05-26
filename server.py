@@ -72,7 +72,6 @@ class Server:
             images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
             PIL.Image.fromarray(images[0], 'RGB').save(thsTrlPth)
 
-
     def evaluateOneGeneration(self, ratings_, wFitterParent_=0.75, mutAmp=.4, mutP=.3):
         """
         :param wFitterParent_: "power" of the higher graded parent picture
@@ -139,7 +138,6 @@ class Server:
         #self.allZ = self.allZ[shuffle_idx, :]
         #self.parents_all = self.parents_all[shuffle_idx]
 
-
     def save_generation_info(self, grades, participant_path):
         with open(participant_path+r'grades.csv', 'a') as fd:
             write = csv.writer(fd)
@@ -152,6 +150,35 @@ class Server:
             write = csv.writer(fd)
             write.writerow(self.parents_all)
 
+    def decode_msg(self, request) -> tuple:
+        message = request.decode("utf-8")  # request as a string
+        state = message.split(' ')[1]  # get state of the app (True or False)
+        rate = message.split(' ')[3]  # get rate from the previous trial (None or 1-9)
+        participant_id = message.split(' ')[5]  # get rate from the previous trial (None or 1-9)
+
+        state = state == "True"
+        if rate == "None":
+            rate = None
+        else:
+            rate = int(rate)
+
+        return (state, rate, participant_id)  # parsed message
+
+    def check_if_participant_exists(self) -> bool:
+        return False
+
+    def reset_session(self):
+        pass
+
+    def resume_session(self):
+        pass
+
+    def handle_new_generation(self):
+        pass
+
+    def handle_next_trial(self):
+        pass
+
 
 gen_rates = []
 session = Server()  # initialise class object
@@ -160,10 +187,7 @@ while True:
     #  Wait for next request from client
     request = socket.recv()
     print("Received request: %s" % request)  # print request in terminal
-    message = request.decode("utf-8")  # request as a string
-    state = message.split(' ')[1]  # get state of the app (True or False)
-    rate = message.split(' ')[3]  # get rate from the previous trial (None or 1-9)
-    participant_id = message.split(' ')[5]  # get rate from the previous trial (None or 1-9)
+    state, rate, participant_id = session.decode_msg(request)
     participant_dir = basePth + f'stimuli/{participant_id}/'
     resume_session = False
     if not os.path.exists(participant_dir):
@@ -181,14 +205,13 @@ while True:
 
     print(f'userID: {participant_id}')
 
-    if rate != "None":
-        rate = int(rate)
+    if rate is not None:
         gen_rates.append(rate)
 
     print(f'current grades: {gen_rates}')
 
     # start a new experiment
-    if state == "True":
+    if state:
         print("Starting a new experiment...")
         if not resume_session:
             session.gen = 0
