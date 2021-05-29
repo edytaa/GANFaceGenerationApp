@@ -15,8 +15,9 @@ import pretrained_networks
 import dnnlib
 import dnnlib.tflib as tflib
 
-TESTING = True
+TESTING = False
 
+context = zmq.Context()
 context = zmq.Context()
 socket = context.socket(zmq.REP)
 socket.bind("tcp://*:5555")
@@ -25,9 +26,10 @@ socket.bind("tcp://*:5555")
 class Server:
     def __init__(self):
         if TESTING:
+            print("TESTING MODE")
             seed = 3004
             self.rnd = np.random.RandomState(seed)
-            self.nTrl = 6  # number of trials
+            self.nTrl = 6  # number of trials per generation
             self.nGen = 10  # number of generations
             self.nSurv = 2  # number of best samples that survive the grading process (prob goes to next generation)
             self.nRnd = 2
@@ -139,8 +141,8 @@ class Server:
         # shuffle order of trials
         shuffle_idx = list(range(self.allZ.shape[0]))
         np.random.shuffle(shuffle_idx)
-        #self.allZ = self.allZ[shuffle_idx, :]
-        #self.parents_info = self.parents_info[shuffle_idx]
+        self.allZ = self.allZ[shuffle_idx, :]
+        self.parents_info = self.parents_info[shuffle_idx]
 
     def save_generation_info(self, participant_id):
         participant_path = self.get_participant_path(participant_id)
@@ -196,6 +198,7 @@ class Server:
             self.allZ = pickle.load(open(pickle_with_allZ, "rb"))
             self.trial = 0
             self.gen = last_full_generation
+            print("Resume session -> found old generation")
         else:  # there is a folder but empty
             self.new_participant(participant_id, generate_folder=False)
 
@@ -223,11 +226,12 @@ def main():
         state, rate, participant_id_ = session.decode_msg(request)
         print(f'received info: state {state}, rate {rate}, participant_id {participant_id_}')
 
-        if state:  # request of new sesion or typed new participant id
+        if state:  # request of new session or typed new participant id
             if not session.check_if_participant_exists(participant_id_):
                 session.new_participant(participant_id_)
             else:
                 session.resume_session(participant_id_)
+
             session.gen_images(participant_id_)
             session.rates = []
         else:
