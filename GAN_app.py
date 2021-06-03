@@ -38,6 +38,9 @@ def main():
 
     if int(user_id) == 0:
         st.image(imPth + r'images/start.png', width=550)
+        message_sent = message.format(reset='False', rate=option, userID=user_id)  # send session state and rating
+        socket.send(bytes(message_sent, 'utf-8'))
+        received = socket.recv_multipart()
 
     elif new_session_button:
         message_ = message.format(reset='True', rate='None', userID=user_id)
@@ -71,6 +74,7 @@ def main():
 def load_socket():
     global init_run
     init_run = True
+    #st.image(imPth + r'images/start.png', width=550)
     print("Connecting to a server…")
     #  Socket to talk to server
     context = zmq.Context()

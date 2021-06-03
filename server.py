@@ -15,7 +15,7 @@ import pretrained_networks
 import dnnlib
 import dnnlib.tflib as tflib
 
-TESTING = False
+TESTING = True
 
 context = zmq.Context()
 context = zmq.Context()
@@ -50,6 +50,7 @@ class Server:
         self.nInPool = self.nTrl - self.nSurv - self.nRnd
         self.parents_info = None
         self.rates = []
+        self.last_user_id = None
 
     def initialise_network(self):
         network_pkl = 'gdrive:networks/stylegan2-ffhq-config-f.pkl'
@@ -226,7 +227,7 @@ def main():
         state, rate, participant_id_ = session.decode_msg(request)
         print(f'received info: state {state}, rate {rate}, participant_id {participant_id_}')
 
-        if state:  # request of new session or typed new participant id
+        if state or (participant_id_ != session.last_user_id and session.last_user_id is not None):  # request of a new session or typed new participant id
             if not session.check_if_participant_exists(participant_id_):
                 session.new_participant(participant_id_)
             else:
@@ -234,15 +235,19 @@ def main():
 
             session.gen_images(participant_id_)
             session.rates = []
-        else:
+            trial_response, gen_response = session.trial, session.gen
+        elif participant_id_ != '0':
             session.rates.append(rate)
             if session.trial == session.nTrl - 1:
                 session.switch_generations(participant_id_)
             else:
                 session.switch_trials()
-        print(f'info send: trial: {session.trial}, gen: {session.gen}')
-        socket.send_multipart([bytes([session.trial]), bytes([session.gen])])
-
+            trial_response, gen_response = session.trial, session.gen
+        else:
+            trial_response, gen_response = 0, 0
+        print(f'info send: trial: {trial_response}, gen: {gen_response}')
+        socket.send_multipart([bytes([trial_response]), bytes([gen_response])])
+        session.last_user_id = participant_id_
 
 if __name__ == "__main__":
     main()
