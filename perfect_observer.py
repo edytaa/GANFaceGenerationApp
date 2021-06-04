@@ -1,13 +1,12 @@
 import numpy as np
-from scipy.spatial import distance
 
 
 class GeneticAlgorithm:
-    def __init__(self, samples):
-        self.nTrl = 5
-        self.nGen = 3
+    def __init__(self):
+        self.nTrl = 10
+        self.nGen = 10
         self.nSurv = 2
-        self.nRnd = 1
+        self.nRnd = 2
         self.dim = 3
         self.ratings = []
         self.target_vector = np.random.randn(1, self.dim)
@@ -15,10 +14,12 @@ class GeneticAlgorithm:
         self.fitness = None
 
     def rate_one_generation(self):
+        self.ratings = []
         for i in range(len(self.samples)):
-            dist = distance.euclidean(self.target_vector, self.samples[i])
+            dist = np.linalg.norm(self.target_vector - self.samples[i])
             self.ratings.append(dist)
         self.softmax()
+        print(f'samples: {self.samples}, \n\n rates: {self.ratings}, \nfit: {self.fitness}')
 
     def softmax(self):
         e_x = np.exp(self.ratings - np.max(self.ratings))
@@ -58,17 +59,16 @@ class GeneticAlgorithm:
         # combine direct survivals and recombined / mutated pool
         self.samples = np.concatenate((thsSurv, thsPool, thsRnd), axis=0)
         # shuffle order of trials
-        np.random.shuffle(self.samples)
+        #np.random.shuffle(self.samples)
 
 
 def main():
     experiment = GeneticAlgorithm()
-    print(f'target vector: {experiment.target_vector}, \n\n samples gen0: {experiment.samples}')
-    experiment.rate_one_generation()
-    experiment.evaluate_one_generation()
-
-    print(f'\n samples: {experiment.samples}, \n\n rates: {experiment.ratings}, \n\n fit: {experiment.fitness}')
-
+    print(f'target vector: {experiment.target_vector}')
+    for i in range(experiment.nGen):
+        print(f'\n Generation: {i} \n')
+        experiment.rate_one_generation()
+        experiment.evaluate_one_generation()
 
 if __name__ == "__main__":
     main()
