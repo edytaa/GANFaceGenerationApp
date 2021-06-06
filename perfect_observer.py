@@ -1,23 +1,42 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import PIL
+import sys
+
+basePth = r'/home/edytak/Documents/GAN_project/code/'
+
+TESTING = True
+SAVE_RESULTS = True
+
+if SAVE_RESULTS:
+    path_stylegan = basePth + r'stylegan2'
+    sys.path.append(path_stylegan)
+    import pretrained_networks
+    import dnnlib
+    import dnnlib.tflib as tflib
 
 
 class GeneticAlgorithm:
-    def __init__(self, nGen_=250, nTrl_=50, nSurv_=10, nRnd_=10):
-        self.nTrl = nTrl_  # number of trials in each generations
-        self.nGen = nGen_  # number of generations
+    def __init__(self, nGen_=50, nTrl_=50, nSurv_=10, nRnd_=10):
+        self.nTrl = nTrl_    # number of trials in each generations
+        self.nGen = nGen_    # number of generations
         self.nSurv = nSurv_  # number of samples surviving from one generations to the other
-        self.nRnd = nRnd_   # number of random samples added to each generation
-        self.dim = 512    # dimension of a vector ("number of features")
-        self.trim_value = 3
+        self.nRnd = nRnd_    # number of random samples added to each generation
+        self.dim = 512       # dimension of a vector ("number of features")
+        self.trim_value = 3  # threshold for trimming
         self.ratings = []
         self.distances = []
         self.target_vector = np.random.randn(1, self.dim)
         self.target_vector = np.clip(self.target_vector, -self.trim_value, self.trim_value)
-        self.target_vector[0] = self.normalise_vectors(self.target_vector[0])
+        self.target_vector[0] = self.normalise_vectors(self.target_vector[0])  # normalise values to be in 0-10 range
         self.samples = np.random.randn(self.nTrl, self.dim)
         self.fitness = None
-        self.average_distance_for_non_ranom = []
+        self.average_distance_for_not_random = []
+        self.noise_vars = []
+        self.rnd = np.random.RandomState()
+        self.Gs = None
+        self.Gs_kwargs = None
+        self.initialise_network()  # initialise network for picture rendering
 
     # restrict values between 0 and 10
     def normalise_vectors(self, sample):
@@ -33,7 +52,6 @@ class GeneticAlgorithm:
         for sample in self.samples:
             trimmed_sample = np.clip(sample, -3, 3)
             scaled_sample = self.normalise_vectors(trimmed_sample)
-     #       print(f'min: {min(scaled_sample)}, max: {max(scaled_sample)}')
             dist = np.linalg.norm(self.target_vector - scaled_sample)  # similarity between vectors (Euclidean dist.)
             #dist /= self.dim ** 0.5
             #dist = 10 - dist  # lower distance means better rate
@@ -45,7 +63,7 @@ class GeneticAlgorithm:
         rates *= -10
         rates += 10
         rates = np.clip(rates, 0, 10)
-        self.average_distance_for_non_ranom.append(np.average(np.sort(self.distances)[:self.nTrl - self.nRnd]))
+        self.average_distance_for_not_random.append(np.average(np.sort(self.distances)[:self.nTrl - self.nRnd]))
         self.ratings = rates.copy()
 
         self.softmax()
@@ -92,55 +110,88 @@ class GeneticAlgorithm:
 
         # combine direct survivals and recombined / mutated pool
         self.samples = np.concatenate((thsSurv, thsPool, thsRnd), axis=0)
-        # shuffle order of trials
-        #np.random.shuffle(self.samples)
+        #np.random.shuffle(self.samples)  # shuffle order of trials
+
+    def initialise_network(self):
+        network_pkl = 'gdrive:networks/stylegan2-ffhq-config-f.pkl'
+        G, D, self.Gs = pretrained_networks.load_networks(network_pkl)
+        print("Network was loaded")
+        self.noise_vars = [var for name, var in self.Gs.components.synthesis.vars.items() if name.startswith('noise')]
+
+        truncation_psi = 0.5
+        self.Gs_kwargs = dnnlib.EasyDict()
+        self.Gs_kwargs.output_transform = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
+        self.Gs_kwargs.randomize_noise = False
+        if truncation_psi is not None:
+            self.Gs_kwargs.truncation_psi = truncation_psi
+
+    def render_picture(self, gen):
+        print("Rendering...")
+        simulation_path = basePth + r'simulation/'
+        # save target face
+        if gen == 0:
+            for tt in range(self.target_vector.shape[0]):
+                target_path = simulation_path + 'target.png'
+                z = self.target_vector[np.newaxis, tt, :]
+                tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
+                images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
+                PIL.Image.fromarray(images[0], 'RGB').save(target_path)
+        # save samples
+        for tt in range(self.samples.shape[0]):
+            samples_path = simulation_path + str(gen) + "_" + str(tt) + '.png'
+            z = self.samples[np.newaxis, tt, :]
+            tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
+            images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
+            PIL.Image.fromarray(images[0], 'RGB').save(samples_path)
 
 
 def main():
-    set_to_test = [{"nTrl_": 50, "nSurv_": 1, "nRnd_": 10},
-                   {"nTrl_": 50, "nSurv_": 5, "nRnd_": 10},
-                   {"nTrl_": 50, "nSurv_": 10, "nRnd_": 10},
-                   {"nTrl_": 50, "nSurv_": 15, "nRnd_": 10},
-                   {"nTrl_": 50, "nSurv_": 20, "nRnd_": 10},
-                   {"nTrl_": 50, "nSurv_": 25, "nRnd_": 10},
-                   {"nTrl_": 50, "nSurv_": 30, "nRnd_": 10},
-                   {"nTrl_": 50, "nSurv_": 1, "nRnd_": 1},
-                   {"nTrl_": 50, "nSurv_": 5, "nRnd_": 1},
-                   {"nTrl_": 50, "nSurv_": 10, "nRnd_": 1},
-                   {"nTrl_": 50, "nSurv_": 15, "nRnd_": 1},
-                   {"nTrl_": 50, "nSurv_": 20, "nRnd_": 1},
-                   {"nTrl_": 50, "nSurv_": 25, "nRnd_": 1},
-                   {"nTrl_": 50, "nSurv_": 30, "nRnd_": 1},
-                   {"nTrl_": 100, "nSurv_": 1, "nRnd_": 10},
-                   {"nTrl_": 100, "nSurv_": 5, "nRnd_": 10},
-                   {"nTrl_": 100, "nSurv_": 10, "nRnd_": 10},
-                   {"nTrl_": 100, "nSurv_": 15, "nRnd_": 10},
-                   {"nTrl_": 100, "nSurv_": 20, "nRnd_": 10},
-                   {"nTrl_": 100, "nSurv_": 25, "nRnd_": 10},
-                   {"nTrl_": 100, "nSurv_": 30, "nRnd_": 10},
-                   ]
+    if TESTING:
+        set_to_test = [{"nTrl_": 5, "nSurv_": 1, "nRnd_": 2}]
+    else:
+        set_to_test = [{"nTrl_": 50, "nSurv_": 1, "nRnd_": 10},
+                       {"nTrl_": 50, "nSurv_": 5, "nRnd_": 10},
+                       {"nTrl_": 50, "nSurv_": 10, "nRnd_": 10},
+                       {"nTrl_": 50, "nSurv_": 15, "nRnd_": 10},
+                       {"nTrl_": 50, "nSurv_": 20, "nRnd_": 10},
+                       {"nTrl_": 50, "nSurv_": 25, "nRnd_": 10},
+                       {"nTrl_": 50, "nSurv_": 30, "nRnd_": 10},
+                       {"nTrl_": 50, "nSurv_": 1, "nRnd_": 1},
+                       {"nTrl_": 50, "nSurv_": 5, "nRnd_": 1},
+                       {"nTrl_": 50, "nSurv_": 10, "nRnd_": 1},
+                       {"nTrl_": 50, "nSurv_": 15, "nRnd_": 1},
+                       {"nTrl_": 50, "nSurv_": 20, "nRnd_": 1},
+                       {"nTrl_": 50, "nSurv_": 25, "nRnd_": 1},
+                       {"nTrl_": 50, "nSurv_": 30, "nRnd_": 1},
+                       {"nTrl_": 100, "nSurv_": 1, "nRnd_": 10},
+                       {"nTrl_": 100, "nSurv_": 5, "nRnd_": 10},
+                       {"nTrl_": 100, "nSurv_": 10, "nRnd_": 10},
+                       {"nTrl_": 100, "nSurv_": 15, "nRnd_": 10},
+                       {"nTrl_": 100, "nSurv_": 20, "nRnd_": 10},
+                       {"nTrl_": 100, "nSurv_": 25, "nRnd_": 10},
+                       {"nTrl_": 100, "nSurv_": 30, "nRnd_": 10},
+                       ]
     all_mean_errors = []
     for params in set_to_test:
-        experiment = GeneticAlgorithm(**params)
-        for gen in range(experiment.nGen):
-            experiment.rate_one_generation()
-            experiment.evaluate_one_generation()
-            if gen % 100 == 0 and False:
+        simulation = GeneticAlgorithm(**params)
+        for gen in range(simulation.nGen):
+            simulation.rate_one_generation()
+            simulation.evaluate_one_generation()
+            if gen % 10 == 0:
                 print(f'\n Generation: {gen} \n')
-                plt.hist(experiment.ratings, bins=10)
-                plt.hist(experiment.distances, bins=100)
-                plt.title(f"gen {gen} nTrial {experiment.nTrl}, nRand {experiment.nRnd}, nSur {experiment.nSurv}")
+                plt.hist(simulation.ratings, bins=10)
+                plt.hist(simulation.distances, bins=100)
+                plt.title(f"gen {gen} nTrial {simulation.nTrl}, nRand {simulation.nRnd}, nSur {simulation.nSurv}")
                 plt.show()
-        #print(f'\n target vector: {experiment.target_vector}')
-        plt.plot(experiment.average_distance_for_non_ranom)
-        mean_error = sum(experiment.average_distance_for_non_ranom) / experiment.nGen
-        plt.title(f'averagedistance, nTrial {experiment.nTrl}, nRand {experiment.nRnd}, nSur {experiment.nSurv}, mean_abs_error {mean_error:.2f}')
+                if SAVE_RESULTS:
+                    simulation.render_picture(gen)
+        plt.plot(simulation.average_distance_for_not_random)
+        mean_error = sum(simulation.average_distance_for_not_random) / simulation.nGen
+        plt.title(f'averagedistance, nTrial {simulation.nTrl}, nRand {simulation.nRnd}, nSur {simulation.nSurv}, mean_abs_error {mean_error:.2f}')
         plt.show()
 
         all_mean_errors.append(mean_error)
         print(mean_error, params)
-
-
 
 
 if __name__ == "__main__":
