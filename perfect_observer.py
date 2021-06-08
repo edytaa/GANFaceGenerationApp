@@ -2,11 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import PIL
 import sys
+import datetime
+import os
+from os import path
+import random
 
 basePth = r'/home/edytak/Documents/GAN_project/code/'
 
-TESTING = True
-SAVE_RESULTS = True
+TESTING = True  # if true, use only one set of parameters
+SAVE_RESULTS = True  # if true, render and safe images
 
 if SAVE_RESULTS:
     path_stylegan = basePth + r'stylegan2'
@@ -17,7 +21,7 @@ if SAVE_RESULTS:
 
 
 class GeneticAlgorithm:
-    def __init__(self, nGen_=50, nTrl_=50, nSurv_=10, nRnd_=10):
+    def __init__(self, nGen_=100, nTrl_=50, nSurv_=10, nRnd_=10):
         self.nTrl = nTrl_    # number of trials in each generations
         self.nGen = nGen_    # number of generations
         self.nSurv = nSurv_  # number of samples surviving from one generations to the other
@@ -27,8 +31,8 @@ class GeneticAlgorithm:
         self.ratings = []
         self.distances = []
         self.target_vector = np.random.randn(1, self.dim)
-        self.target_vector = np.clip(self.target_vector, -self.trim_value, self.trim_value)
-        self.target_vector[0] = self.normalise_vectors(self.target_vector[0])  # normalise values to be in 0-10 range
+        self.target_vector_norm = np.clip(self.target_vector, -self.trim_value, self.trim_value)
+        self.target_vector_norm[0] = self.normalise_vectors(self.target_vector_norm[0])  # normalise values to be in 0-10 range
         self.samples = np.random.randn(self.nTrl, self.dim)
         self.fitness = None
         self.average_distance_for_not_random = []
@@ -125,19 +129,23 @@ class GeneticAlgorithm:
         if truncation_psi is not None:
             self.Gs_kwargs.truncation_psi = truncation_psi
 
-    def render_picture(self, gen):
+    def render_picture(self, gen, params):
         print("Rendering...")
-        simulation_path = basePth + r'simulation/'
-        # save target face
+        date = str(datetime.date.today())  # use date for naming dir
+        params_list = list(params.values()) # list of tested parameters [nTrl, nSurv, nRnd]
+        simulation_path = basePth + r'simulation/' + date + r'/' + str(params_list) + r'/'
+        # create folder and save target face
         if gen == 0:
+            if not path.isdir(simulation_path):
+                os.makedirs(simulation_path)
             for tt in range(self.target_vector.shape[0]):
                 target_path = simulation_path + 'target.png'
                 z = self.target_vector[np.newaxis, tt, :]
                 tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
                 images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
                 PIL.Image.fromarray(images[0], 'RGB').save(target_path)
-        # save samples
-        for tt in range(self.samples.shape[0]):
+        # save samples (only survivors )
+        for tt in range(params_list[1]):
             samples_path = simulation_path + str(gen) + "_" + str(tt) + '.png'
             z = self.samples[np.newaxis, tt, :]
             tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
@@ -147,7 +155,7 @@ class GeneticAlgorithm:
 
 def main():
     if TESTING:
-        set_to_test = [{"nTrl_": 5, "nSurv_": 1, "nRnd_": 2}]
+        set_to_test = [{"nTrl_": 30, "nSurv_": 10, "nRnd_": 10}]
     else:
         set_to_test = [{"nTrl_": 50, "nSurv_": 1, "nRnd_": 10},
                        {"nTrl_": 50, "nSurv_": 5, "nRnd_": 10},
@@ -184,7 +192,7 @@ def main():
                 plt.title(f"gen {gen} nTrial {simulation.nTrl}, nRand {simulation.nRnd}, nSur {simulation.nSurv}")
                 plt.show()
                 if SAVE_RESULTS:
-                    simulation.render_picture(gen)
+                    simulation.render_picture(gen, params)
         plt.plot(simulation.average_distance_for_not_random)
         mean_error = sum(simulation.average_distance_for_not_random) / simulation.nGen
         plt.title(f'averagedistance, nTrial {simulation.nTrl}, nRand {simulation.nRnd}, nSur {simulation.nSurv}, mean_abs_error {mean_error:.2f}')
