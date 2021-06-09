@@ -21,7 +21,7 @@ if SAVE_RESULTS:
 
 
 class GeneticAlgorithm:
-    def __init__(self, nGen_=100, nTrl_=50, nSurv_=10, nRnd_=10):
+    def __init__(self, nGen_=500, nTrl_=50, nSurv_=10, nRnd_=10):
         self.nTrl = nTrl_    # number of trials in each generations
         self.nGen = nGen_    # number of generations
         self.nSurv = nSurv_  # number of samples surviving from one generations to the other
@@ -41,6 +41,7 @@ class GeneticAlgorithm:
         self.Gs = None
         self.Gs_kwargs = None
         self.initialise_network()  # initialise network for picture rendering
+        self.simulation_path = None
 
     # restrict values between 0 and 10
     def normalise_vectors(self, sample):
@@ -56,7 +57,7 @@ class GeneticAlgorithm:
         for sample in self.samples:
             trimmed_sample = np.clip(sample, -3, 3)
             scaled_sample = self.normalise_vectors(trimmed_sample)
-            dist = np.linalg.norm(self.target_vector - scaled_sample)  # similarity between vectors (Euclidean dist.)
+            dist = np.linalg.norm(self.target_vector_norm - scaled_sample)  # similarity between vectors (Euclidean dist.)
             #dist /= self.dim ** 0.5
             #dist = 10 - dist  # lower distance means better rate
             distances.append(dist)
@@ -69,9 +70,7 @@ class GeneticAlgorithm:
         rates = np.clip(rates, 0, 10)
         self.average_distance_for_not_random.append(np.average(np.sort(self.distances)[:self.nTrl - self.nRnd]))
         self.ratings = rates.copy()
-
         self.softmax()
-     #   print(f'samples: {self.samples}, \n\n rates: {self.ratings}, \nfit: {self.fitness}')
 
     # transform ratings to probabilities (needed for sampling parents)
     def softmax(self):
@@ -129,11 +128,14 @@ class GeneticAlgorithm:
         if truncation_psi is not None:
             self.Gs_kwargs.truncation_psi = truncation_psi
 
-    def render_picture(self, gen, params):
-        print("Rendering...")
+    def get_simulation_path(self):
         date = str(datetime.date.today())  # use date for naming dir
-        params_list = list(params.values()) # list of tested parameters [nTrl, nSurv, nRnd]
-        simulation_path = basePth + r'simulation/' + date + r'/' + str(params_list) + r'/'
+        params_list = [self.nTrl, self.nSurv, self.nRnd]
+        return basePth + r'simulation/' + date + r'/' + str(params_list) + r'/'
+
+    def render_pictures(self, gen):
+        print("Rendering...")
+        simulation_path = self.get_simulation_path()
         # create folder and save target face
         if gen == 0:
             if not path.isdir(simulation_path):
@@ -145,17 +147,41 @@ class GeneticAlgorithm:
                 images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
                 PIL.Image.fromarray(images[0], 'RGB').save(target_path)
         # save samples (only survivors )
-        for tt in range(params_list[1]):
+        for tt in range(self.nSurv):
             samples_path = simulation_path + str(gen) + "_" + str(tt) + '.png'
             z = self.samples[np.newaxis, tt, :]
             tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
             images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
             PIL.Image.fromarray(images[0], 'RGB').save(samples_path)
 
+    # create and save plots (distances and rates)
+    def plot_distances(self, gen):
+        trials = self.nTrl*(gen+1)  # number of already run trials
+        simulation_path = self.get_simulation_path()  # path to folder for a current simulation
+        plt.clf()  # clean plot
+        plt.hist(self.ratings, bins=10, color='tab:blue')
+        plt.hist(self.distances, bins=10, color='tab:orange')
+        plt.xlabel('Rate (blue), Distance (orange)')
+        plt.title(f'Trials {trials}, nTrial: {self.nTrl}, nRand: {self.nRnd}, nSur: {self.nSurv}')
+        plt.show()  # if the script is run locally, show plots
+        plot_path = simulation_path + 'plot_' + str(trials)
+        plt.savefig(plot_path + '.png')
+
+    def plot_average_distance(self, mean_error):
+        simulation_path = self.get_simulation_path()  # path to folder for a current simulation
+        plt.clf()  # clean plot
+        x_values = list(range(0, self.nTrl*self.nGen, self.nTrl))
+        plt.plot(x_values, self.average_distance_for_not_random)
+        plt.xlabel('Trials')
+        plt.title(f'average distance \n nTrial: {self.nTrl}, nRand: {self.nRnd},'
+                  f' nSur: {self.nSurv}, mean_abs_error: {mean_error:.2f}')
+        plt.show()  # if the script is run locally, show plots
+        plt.savefig(simulation_path + 'average_distance.png')
+
 
 def main():
     if TESTING:
-        set_to_test = [{"nTrl_": 30, "nSurv_": 10, "nRnd_": 10}]
+        set_to_test = [{"nTrl_": 50, "nSurv_": 10, "nRnd_": 10}]
     else:
         set_to_test = [{"nTrl_": 50, "nSurv_": 1, "nRnd_": 10},
                        {"nTrl_": 50, "nSurv_": 5, "nRnd_": 10},
@@ -186,20 +212,17 @@ def main():
             simulation.rate_one_generation()
             simulation.evaluate_one_generation()
             if gen % 10 == 0:
-                print(f'\n Generation: {gen} \n')
-                plt.hist(simulation.ratings, bins=10)
-                plt.hist(simulation.distances, bins=100)
-                plt.title(f"gen {gen} nTrial {simulation.nTrl}, nRand {simulation.nRnd}, nSur {simulation.nSurv}")
-                plt.show()
+                print(f'\n Trials: {simulation.nTrl*(gen+1)} \n Generation: {gen} \n')
                 if SAVE_RESULTS:
-                    simulation.render_picture(gen, params)
-        plt.plot(simulation.average_distance_for_not_random)
+                    simulation.render_pictures(gen)
+                    simulation.plot_distances(gen)
         mean_error = sum(simulation.average_distance_for_not_random) / simulation.nGen
-        plt.title(f'averagedistance, nTrial {simulation.nTrl}, nRand {simulation.nRnd}, nSur {simulation.nSurv}, mean_abs_error {mean_error:.2f}')
-        plt.show()
+        if SAVE_RESULTS:
+            simulation.plot_average_distance(mean_error)
 
         all_mean_errors.append(mean_error)
         print(mean_error, params)
+    #    print(f'\n Distances: {simulation.distances}, \n\n Rates: {simulation.ratings}')
 
 
 if __name__ == "__main__":
