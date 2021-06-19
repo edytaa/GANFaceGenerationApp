@@ -7,6 +7,10 @@ import os
 from os import path
 import csv
 import ast
+import math
+import pickle
+import pandas as pd
+
 
 basePth = r'/home/edytak/Documents/GAN_project/code/'
 
@@ -22,11 +26,14 @@ if SAVE_RESULTS:
 
 
 class GeneticAlgorithm:
-    def __init__(self, nGen_=200, nTrl_=50, nSurv_=10, nRnd_=10):
+    def __init__(self, allTrl_=10000, nTrl_=50, nSurv_=10, nRnd_=10, set_number_ = 1):
+        self.allTrl = allTrl_
         self.nTrl = nTrl_    # number of trials in each generations
-        self.nGen = nGen_    # number of generations
+        self.nGen = math.floor(allTrl_ / nTrl_)   # number of (full) generations
         self.nSurv = nSurv_  # number of samples surviving from one generations to the other
         self.nRnd = nRnd_    # number of random samples added to each generation
+        self.set_number = set_number_
+        self.completed_trials = None   # number of completed trials
         self.dim = 512       # dimension of a vector ("number of features")
         self.trim_value = 3  # threshold for trimming
         self.ratings = []
@@ -46,6 +53,8 @@ class GeneticAlgorithm:
         self.today_simulation_path = None
         self.simulation_path = None
         self.get_simulation_path()
+        self.distances_plotting = []
+        self.average_distance_plotting = []
 
     # restrict values between 0 and 10
     def normalise_vectors(self, sample):
@@ -65,6 +74,7 @@ class GeneticAlgorithm:
             #dist /= self.dim ** 0.5
             #dist = 10 - dist  # lower distance means better rate
             distances.append(dist)
+            self.distances_plotting.append(dist)  # collect distances for each sample
         self.distances = np.array(distances)
         n_highest = np.partition(self.distances, -self.nRnd - 1)[-self.nRnd-1:]
         rates = distances - min(distances)
@@ -140,7 +150,7 @@ class GeneticAlgorithm:
         self.simulation_path = self.today_simulation_path + str(params_list) + r'/'
 
     def render_pictures(self, gen):
-        print("Rendering...")
+        print("Rendering images...")
         # create folder and save target face
         if gen == 0:
             if not path.isdir(self.simulation_path):
@@ -151,68 +161,74 @@ class GeneticAlgorithm:
                 tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
                 images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
                 PIL.Image.fromarray(images[0], 'RGB').save(target_path)
+        '''
         # save samples (only survivors )
         for tt in range(self.nSurv):
             samples_path = self.simulation_path + str(gen) + "_" + str(tt) + '.png'
             z = self.samples[np.newaxis, tt, :]
             tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
             images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
-            PIL.Image.fromarray(images[0], 'RGB').save(samples_path)
+            PIL.Image.fromarray(images[0], 'RGB').save(samples_path)'''
 
     # create and save plots (distances and rates)
-    def plot_distances(self, gen):
-        trials = self.nTrl*(gen+1)  # number of already run trials
+    def plot_distances(self):
         fig, ax = plt.subplots()
         ax.hist(self.ratings, bins=10, color='tab:blue')
         ax.hist(self.distances, bins=10, color='tab:orange')
         ax.set_xlabel('Rate (blue), Distance (orange)')
-        ax.set_title(f'Trials {trials}, nTrial: {self.nTrl}, nRand: {self.nRnd}, nSur: {self.nSurv}')
-        plot_path = self.simulation_path + 'plot_' + str(trials)
+        ax.set_title(f'Trials {self.completed_trials}, nTrial: {self.nTrl}, nRand: {self.nRnd}, nSur: {self.nSurv}')
+        plot_path = self.simulation_path + 'plot_' + str(self.completed_trials)
         fig.savefig(plot_path + '.png')
+        plt.close(fig)
 
     def plot_average_distance(self, mean_error):
         fig, ax = plt.subplots()
-        x_values = list(range(0, self.nTrl*self.nGen, self.nTrl)) # show trial number on x-axis
-        ax.plot(x_values, self.average_distance_for_not_random)
+      #  x_values = list(range(0, self.allTrl, self.nTrl))  # show trial number on x-axis
+     #   ax.plot(x_values, self.average_distance_for_not_random)
+        ax.plot(self.average_distance_for_not_random)
         ax.set_xlabel('Trials')
         ax.set_title(f'average distance \n nTrial: {self.nTrl}, nRand: {self.nRnd},'
                   f' nSur: {self.nSurv}, mean_abs_error: {mean_error:.2f}')
         fig.savefig(self.simulation_path + 'average_distance.png')
+        plt.close(fig)
+
+    def moving_average(self, w=100):
+        return np.convolve(self.distances_plotting, np.ones(w), 'valid') / w
 
     # save information about each set of tested parameters
     def save_distances(self, gen):
-        distances_file = self.today_simulation_path + r'distances.csv'
-        info_for_saving = self.nTrl, self.nSurv, self.nRnd, gen, self.average_distance_for_not_random
-        with open(distances_file, 'a') as file:
-            write = csv.writer(file)
-            write.writerow(info_for_saving)
+        distances_file = self.today_simulation_path + r'distances_' + str(self.set_number) + r'.p'
+        average_distance_plotting = self.moving_average(450)
+        info_for_saving_pickle = {"nTrl": self.nTrl, "nSurv": self.nSurv, "nRnd": self.nRnd,
+                                  "gen": gen, "dist": average_distance_plotting}
+        pickle.dump(info_for_saving_pickle, open(distances_file, "wb"))
 
-    def plot_multiple_distances(self):
+    # plot average distances over trials (for all sets of parameters)
+    def plot_multiple_distances(self, number_of_sets):
         fig, ax = plt.subplots()
-        x_values = list(range(0, self.nTrl * self.nGen, self.nTrl))  # show trial number on x-axis
+        for set in range(number_of_sets):
+            distances_file = self.today_simulation_path + r'distances_' + str(set) + r'.p'
+            info = pickle.load(open(distances_file, "rb"))
+            distances = info.get('dist')
+            labels = str(info.get('nTrl')) + '-' + str(info.get('nSurv')) + '-' + str(info.get('nRnd'))
+            ax.plot(distances,  label=labels)
+            ax.legend()
+            ax.set_xlabel('Trials')
+            ax.set_ylabel('Average distance')
+            ax.set_title('Average distance over trials - comparison')
+            fig.savefig(self.today_simulation_path + 'comparison.png')
 
-        with open(self.today_simulation_path + r'distances.csv', 'r') as csvfile:
-            plots = csv.reader(csvfile, delimiter=',')
-
-            for row in plots:
-                labels = [int(i) for i in row[:3]]
-                distances = row[4]  # get distances
-                distances_list = ast.literal_eval(distances)  # string to list
-                ax.plot(x_values, distances_list, label=labels)
-
-        ax.legend()
         ax.set_xlabel('Trials')
         ax.set_ylabel('Average distance')
         ax.set_title('Average distance over trials - comparison')
         fig.savefig(self.today_simulation_path + 'comparison.png')
-
+        plt.close(fig)
 
 def main():
     if TESTING:
-        set_to_test = [{"nTrl_": 30, "nSurv_": 5, "nRnd_": 5},
-                       {"nTrl_": 40, "nSurv_": 5, "nRnd_": 5},
-                       {"nTrl_": 50, "nSurv_": 5, "nRnd_": 5},
-                       {"nTrl_": 60, "nSurv_": 5, "nRnd_": 5}]
+        set_to_test = [{"nTrl_": 30, "nSurv_": 10, "nRnd_": 10, "set_number_": 0},
+                       {"nTrl_": 45, "nSurv_": 10, "nRnd_": 10, "set_number_": 1},
+                       {"nTrl_": 50, "nSurv_": 10, "nRnd_": 10, "set_number_": 2}]
     else:
         set_to_test = [{"nTrl_": 50, "nSurv_": 1, "nRnd_": 10},
                        {"nTrl_": 50, "nSurv_": 5, "nRnd_": 10},
@@ -239,23 +255,24 @@ def main():
     all_mean_errors = []
     for params in set_to_test:
         simulation = GeneticAlgorithm(**params)
+        print(f'Number of generations: {simulation.nGen}')
         for gen in range(simulation.nGen):
             simulation.rate_one_generation()
             simulation.evaluate_one_generation()
+            simulation.completed_trials = simulation.nTrl * (gen + 1)  # number of completed trials
             if gen % 10 == 0:
-                print(f'\n Trials: {simulation.nTrl*(gen+1)} \n Generation: {gen} \n')
+                print(f'\n Trials: {simulation.completed_trials} \n Generation: {gen} \n')
                 if SAVE_RESULTS:
                     simulation.render_pictures(gen)
-                    simulation.plot_distances(gen)
-        simulation.save_distances(gen)
+                    simulation.plot_distances()
+        simulation.save_distances(gen)  # save info for a finished simulation
         mean_error = sum(simulation.average_distance_for_not_random) / simulation.nGen
         if SAVE_RESULTS:
             simulation.plot_average_distance(mean_error)
-
         all_mean_errors.append(mean_error)
        # print(mean_error, params)
-    #    print(f'\n Distances: {simulation.distances}, \n\n Rates: {simulation.ratings}')
-    simulation.plot_multiple_distances()
+    simulation.plot_multiple_distances(len(set_to_test))  # plot average distances over trials (all sets of parameters)
+
 
 if __name__ == "__main__":
     main()
