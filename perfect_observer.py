@@ -32,7 +32,7 @@ class GeneticAlgorithm:
         self.nGen = math.floor(allTrl_ / nTrl_)   # number of (full) generations
         self.nSurv = nSurv_  # number of samples surviving from one generations to the other
         self.nRnd = nRnd_    # number of random samples added to each generation
-        self.set_number = set_number_
+        self.set_number = set_number_  # number of sets of parameters for simulation
         self.completed_trials = None   # number of completed trials
         self.dim = 512       # dimension of a vector ("number of features")
         self.trim_value = 3  # threshold for trimming
@@ -43,7 +43,6 @@ class GeneticAlgorithm:
         self.target_vector_norm[0] = self.normalise_vectors(self.target_vector_norm[0])  # normalise values to be in 0-10 range
         self.samples = np.random.randn(self.nTrl, self.dim)
         self.fitness = None
-        self.average_distance = None
         self.average_distance_for_not_random = []
         self.noise_vars = []
         self.rnd = np.random.RandomState()
@@ -71,19 +70,17 @@ class GeneticAlgorithm:
             trimmed_sample = np.clip(sample, -3, 3)
             scaled_sample = self.normalise_vectors(trimmed_sample)
             dist = np.linalg.norm(self.target_vector_norm - scaled_sample)  # similarity between vectors (Euclidean dist.)
-            #dist /= self.dim ** 0.5
-            #dist = 10 - dist  # lower distance means better rate
             distances.append(dist)
-            self.distances_plotting.append(dist)  # collect distances for each sample
+            self.distances_plotting.append(dist)  # collect distance for each sample
         self.distances = np.array(distances)
-        n_highest = np.partition(self.distances, -self.nRnd - 1)[-self.nRnd-1:]
+        n_highest = np.partition(self.distances, -self.nRnd - 1)[-self.nRnd-1:]  # choose only the best vectors
+        # convert distances to rates
         rates = distances - min(distances)
         rates /= min(n_highest) - min(distances)
         rates *= -10
         rates += 10
         rates = np.clip(rates, 0, 10)
-        self.average_distance = np.average(np.sort(self.distances)[:self.nTrl - self.nRnd])
-        self.average_distance_for_not_random.append(self.average_distance)
+        self.average_distance_for_not_random.append(np.average(np.sort(self.distances)[:self.nTrl - self.nRnd]))
         self.ratings = rates.copy()
         self.softmax()
 
@@ -161,14 +158,14 @@ class GeneticAlgorithm:
                 tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
                 images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
                 PIL.Image.fromarray(images[0], 'RGB').save(target_path)
-        '''
+
         # save samples (only survivors )
         for tt in range(self.nSurv):
-            samples_path = self.simulation_path + str(gen) + "_" + str(tt) + '.png'
+            samples_path = self.simulation_path + str(self.completed_trials) + "_" + str(tt) + '.png'
             z = self.samples[np.newaxis, tt, :]
             tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
             images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
-            PIL.Image.fromarray(images[0], 'RGB').save(samples_path)'''
+            PIL.Image.fromarray(images[0], 'RGB').save(samples_path)
 
     # create and save plots (distances and rates)
     def plot_distances(self):
@@ -183,9 +180,9 @@ class GeneticAlgorithm:
 
     def plot_average_distance(self, mean_error):
         fig, ax = plt.subplots()
-      #  x_values = list(range(0, self.allTrl, self.nTrl))  # show trial number on x-axis
-     #   ax.plot(x_values, self.average_distance_for_not_random)
-        ax.plot(self.average_distance_for_not_random)
+        x_values = np.linspace(0, self.allTrl, self.nGen)  # show trial number on x-axis
+        ax.plot(x_values, self.average_distance_for_not_random)
+        ax.grid()
         ax.set_xlabel('Trials')
         ax.set_title(f'average distance \n nTrial: {self.nTrl}, nRand: {self.nRnd},'
                   f' nSur: {self.nSurv}, mean_abs_error: {mean_error:.2f}')
@@ -198,7 +195,7 @@ class GeneticAlgorithm:
     # save information about each set of tested parameters
     def save_distances(self, gen):
         distances_file = self.today_simulation_path + r'distances_' + str(self.set_number) + r'.p'
-        average_distance_plotting = self.moving_average(450)
+        average_distance_plotting = self.moving_average(600)
         info_for_saving_pickle = {"nTrl": self.nTrl, "nSurv": self.nSurv, "nRnd": self.nRnd,
                                   "gen": gen, "dist": average_distance_plotting}
         pickle.dump(info_for_saving_pickle, open(distances_file, "wb"))
@@ -212,6 +209,7 @@ class GeneticAlgorithm:
             distances = info.get('dist')
             labels = str(info.get('nTrl')) + '-' + str(info.get('nSurv')) + '-' + str(info.get('nRnd'))
             ax.plot(distances,  label=labels)
+            ax.grid()
             ax.legend()
             ax.set_xlabel('Trials')
             ax.set_ylabel('Average distance')
@@ -226,9 +224,10 @@ class GeneticAlgorithm:
 
 def main():
     if TESTING:
-        set_to_test = [{"nTrl_": 30, "nSurv_": 10, "nRnd_": 10, "set_number_": 0},
-                       {"nTrl_": 45, "nSurv_": 10, "nRnd_": 10, "set_number_": 1},
-                       {"nTrl_": 50, "nSurv_": 10, "nRnd_": 10, "set_number_": 2}]
+        set_to_test = [{"nTrl_": 40, "nSurv_": 6, "nRnd_": 6, "set_number_": 0},
+                       {"nTrl_": 50, "nSurv_": 7, "nRnd_": 7, "set_number_": 1},
+                       {"nTrl_": 60, "nSurv_": 9, "nRnd_": 9, "set_number_": 2}
+                       ]
     else:
         set_to_test = [{"nTrl_": 50, "nSurv_": 1, "nRnd_": 10},
                        {"nTrl_": 50, "nSurv_": 5, "nRnd_": 10},

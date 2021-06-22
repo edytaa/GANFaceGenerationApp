@@ -15,7 +15,7 @@ import pretrained_networks
 import dnnlib
 import dnnlib.tflib as tflib
 
-TESTING = True
+TESTING = False
 
 context = zmq.Context()
 context = zmq.Context()
@@ -72,12 +72,16 @@ class Server:
         with open(participant_dir+f'allZ_gen_{self.gen}.pkl', 'wb') as fd:
             pickle.dump(self.allZ, fd)
         for tt in range(self.allZ.shape[0]):
-            thsTrlPth = participant_dir + 'trl_' + str(self.gen) + "_" + str(tt) + '.png'  # FIXME: remove all globals (e.g. participant_dir)
-            print(f'Generating image  {tt} for generation {self.gen} ...')
-            z = self.allZ[np.newaxis, tt, :]
-            tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
-            images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
-            PIL.Image.fromarray(images[0], 'RGB').save(thsTrlPth)
+            thsTrlPth = participant_dir + 'trl_' + str(self.gen) + "_" + str(tt) + '.png'
+            # check if image exists; if not: generate image
+            if not os.path.isfile(thsTrlPth):
+                print(f'Generating image  {tt} for generation {self.gen} ...')
+                z = self.allZ[np.newaxis, tt, :]
+                tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
+                images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
+                PIL.Image.fromarray(images[0], 'RGB').save(thsTrlPth)
+            else:
+                pass
 
     def evaluateOneGeneration(self, wFitterParent_=0.75, mutAmp=.4, mutP=.3):
         """
@@ -101,7 +105,7 @@ class Server:
         parents_survival = [(p, -1, '>') for p in thsIndices[-self.nSurv:]]
         print(f'grades: {thsResp} \n thsFitness: {thsFitness} \n thsIndices {thsIndices}, \n parents_survival: {parents_survival} \n\n')
 
-        # generate recombinations from 2 parent latent vectors of current gen
+        # generate recombination from 2 parent latent vectors of current gen
         # w. fitness proportional to probability of being parent
         # parent with higher fitness contributes more
         thsPool = np.zeros([self.nInPool, self.allZ.shape[1]])

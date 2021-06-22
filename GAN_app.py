@@ -9,6 +9,7 @@ path_stylegan = basePth + r'stylegan2'
 sys.path.append(path_stylegan)
 
 imPth = basePth + 'stimuli/'  # path to dir with participants' folders
+#imPth = r'/analyse/Project0257/'
 init_run = False  # indicate when a session is run for the first time
 initial_user_id = 0
 
