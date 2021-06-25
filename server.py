@@ -6,6 +6,9 @@ import csv
 import os
 import pickle
 from os import walk
+import threading
+from time import sleep
+from random import randint
 
 basePth = r'/home/edytak/Documents/GAN_project/code/'
 path_stylegan = basePth + r'stylegan2'
@@ -14,8 +17,14 @@ sys.path.append(path_stylegan)
 import pretrained_networks
 import dnnlib
 import dnnlib.tflib as tflib
+import tensorflow as tf
+from tensorflow.python.keras.backend import set_session
 
-TESTING = False
+TESTING = True  #
+samples_ready = False  # if true: a new generation of samples is ready (needed for threading)
+n_generated_samples = 0  # number of rendered samples for a new generation (needed for threading)
+samples_ready_information_sent = False
+
 
 context = zmq.Context()
 context = zmq.Context()
@@ -46,7 +55,12 @@ class Server:
         self.Gs = None
         self.Gs_kwargs = None
         self.allZ = np.random.randn(self.nTrl, 512)
-        self.initialise_network()
+        self.session = tflib.init_tf()
+        self.graph = tf.get_default_graph()
+        with self.graph.as_default():
+            set_session(self.session)
+            print('init', tf.get_default_session())
+            self.initialise_network()
         self.nInPool = self.nTrl - self.nSurv - self.nRnd
         self.parents_info = None
         self.rates = []
@@ -68,10 +82,13 @@ class Server:
         print("Server initialised - waiting for a client")
 
     def gen_images(self, participant_id):
+        global samples_ready, n_generated_samples
+        print('gen_images', tf.get_default_session())
         participant_dir = self.get_participant_path(participant_id)
         with open(participant_dir+f'allZ_gen_{self.gen}.pkl', 'wb') as fd:
             pickle.dump(self.allZ, fd)
         for tt in range(self.allZ.shape[0]):
+            refresher()
             thsTrlPth = participant_dir + 'trl_' + str(self.gen) + "_" + str(tt) + '.png'
             # check if image exists; if not: generate image
             if not os.path.isfile(thsTrlPth):
@@ -80,8 +97,12 @@ class Server:
                 tflib.set_vars({var: self.rnd.randn(*var.shape.as_list()) for var in self.noise_vars})  # [height, width]
                 images = self.Gs.run(z, None, **self.Gs_kwargs)  # [minibatch, height, width, channel]
                 PIL.Image.fromarray(images[0], 'RGB').save(thsTrlPth)
+                n_generated_samples += 1
             else:
                 pass
+        samples_ready = True
+        refresher()
+
 
     def evaluateOneGeneration(self, wFitterParent_=0.75, mutAmp=.4, mutP=.3):
         """
@@ -207,7 +228,9 @@ class Server:
         else:  # there is a folder but empty
             self.new_participant(participant_id, generate_folder=False)
 
-    def switch_generations(self, participant_id):
+    def switch_generations(self, participant_id, session, graph):
+        global samples_ready, n_generated_samples
+        n_generated_samples = 0
         self.save_generation_info(participant_id)
         self.evaluateOneGeneration()
         self.save_creation_info(participant_id)
@@ -215,15 +238,27 @@ class Server:
         self.gen += 1
         self.rates = []
         self.parents_info = []
-        self.gen_images(participant_id)
+        with graph.as_default():
+            with session.as_default():
+                print('switch_generations', tf.get_default_session())
+                self.gen_images(participant_id)
 
     def switch_trials(self):
         self.trial += 1
 
 
-def main():
-    session = Server()  # initialise class object
+def refresher():
+    # https://stackoverflow.com/questions/62718133/how-to-make-streamlit-reloads-every-5-seconds
+    mainDir = os.path.dirname(__file__)
+    filePath = os.path.join(mainDir, 'dummy.py')
+    with open(filePath, 'w') as f:
+        f.write(f'# {randint(0, 100000)}')
 
+
+def main():
+    global n_generated_samples, samples_ready, samples_ready_information_sent
+    session = Server()  # initialise class object
+    samples_ready_information_sent = False
     while True:
         #  Wait for next request from client
         request = socket.recv()
@@ -240,18 +275,40 @@ def main():
             session.gen_images(participant_id_)
             session.rates = []
             trial_response, gen_response = session.trial, session.gen
+            samples_ready_information_sent = False
+
         elif participant_id_ != '0':
-            session.rates.append(rate)
-            if session.trial == session.nTrl - 1:
-                session.switch_generations(participant_id_)
+            print(f"sample ready: {samples_ready} info send {samples_ready_information_sent}")
+            if samples_ready:
+                if samples_ready_information_sent:
+                    session.rates.append(rate)
+                if session.trial == session.nTrl - 1:
+                    print('main tf_session', tf.get_default_session())
+                    samples_ready = False  # new samples not ready (part of threading)
+                    samples_ready_information_sent = False
+                    thread = threading.Thread(target=session.switch_generations, args=(participant_id_,
+                                                                                       session.session,
+                                                                                       session.graph))
+                    thread.start()
+                    #trial_response, gen_response = n_generated_samples, session.gen
+                elif samples_ready_information_sent:
+                    session.switch_trials()
+                    samples_ready_information_sent = True
+                else:
+                    samples_ready_information_sent = True
+                trial_response, gen_response = session.trial, session.gen
+                print(f"continue... {samples_ready_information_sent} trial: {session.trial}")
+
             else:
-                session.switch_trials()
-            trial_response, gen_response = session.trial, session.gen
+                trial_response, gen_response = n_generated_samples, session.gen
         else:
             trial_response, gen_response = 0, 0
-        print(f'info send: trial: {trial_response}, gen: {gen_response}')
-        socket.send_multipart([bytes([trial_response]), bytes([gen_response])])
+
+        print(f'info send: trial: {trial_response}, gen: {gen_response}, new generation ready?: {samples_ready}, info_send: {samples_ready_information_sent}')
+        socket.send_multipart([bytes([trial_response]), bytes([gen_response]),
+                               bytes(str(samples_ready), 'utf-8'), bytes([n_generated_samples])])
         session.last_user_id = participant_id_
+
 
 if __name__ == "__main__":
     main()

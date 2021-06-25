@@ -2,7 +2,10 @@ import streamlit as st
 import sys
 import os
 import zmq
+import time
+from random import randint
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
+from dummy import *
 
 basePth = r'/home/edytak/Documents/GAN_project/code/'
 path_stylegan = basePth + r'stylegan2'
@@ -42,6 +45,8 @@ def main():
         message_sent = message.format(reset='False', rate=option, userID=user_id)  # send session state and rating
         socket.send(bytes(message_sent, 'utf-8'))
         received = socket.recv_multipart()
+        samples_generated = received[2].decode("utf-8")
+        trial = int.from_bytes(received[0], "little")  # bytes to int
 
     elif new_session_button:
         message_ = message.format(reset='True', rate='None', userID=user_id)
@@ -51,6 +56,7 @@ def main():
         received = socket.recv_multipart()  # get trial number and generation
         trial = int.from_bytes(received[0], "little")  # bytes to int
         generation = int.from_bytes(received[1], "little")
+        samples_generated = received[2].decode("utf-8")
         st.write(f'Generation: {generation}, Trial: {trial}')
         st.image(userPth + 'trl_0_' + str(trial) + '.png', width=550)  # display image
 
@@ -60,13 +66,19 @@ def main():
         received = socket.recv_multipart()  # get trial number and generation
         trial = int.from_bytes(received[0], "little")  # bytes to int
         generation = int.from_bytes(received[1], "little")
+        samples_generated = received[2].decode("utf-8")
+        n_generated_samples = int.from_bytes(received[3], "little")  # number of rendered samples (part of threading)
         picture_path = userPth + 'trl_' + str(generation) + '_' + str(trial) + '.png'
-        if os.path.isfile(picture_path):
+        if samples_generated == 'False':  # if new samples are not ready yet
+            st.write(f'Please wait. {trial} samples already generated')
+        elif os.path.isfile(picture_path):
             st.write(f'Previous image rated with: {option}')
             st.write(f'Generation: {generation}, Trial: {trial}')
             st.image(userPth + 'trl_' + str(generation) + '_' + str(trial) + '.png', width=550)  # display image
         else:
             st.write(f'Hello {user_id}, Click Start to begin experiment')
+
+    print(f'\n samples ready?: {samples_generated}, trial {trial}')
 #    print(f'generation: {generation}, trial: {trial}')
 
 
