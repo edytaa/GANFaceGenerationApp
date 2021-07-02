@@ -19,7 +19,7 @@ import dnnlib.tflib as tflib
 import tensorflow as tf
 from tensorflow.python.keras.backend import set_session
 
-TESTING = False
+TESTING = True
 samples_ready = False  # if true: a new generation of samples is ready (needed for threading)
 n_generated_samples = 0  # number of rendered samples for a new generation (needed for threading)
 samples_ready_information_sent = False  # if true: client was informed about ready samples
@@ -28,7 +28,9 @@ NON_FUNCTIONAL_GRADE = 99
 context = zmq.Context()
 context = zmq.Context()
 socket = context.socket(zmq.REP)
-socket.bind("tcp://*:5555")
+server_id = sys.argv[1]
+address = r'tcp://*:' + str(server_id)
+socket.bind(address)
 
 
 class Server:
@@ -189,17 +191,15 @@ class Server:
 
     def decode_msg(self, request) -> tuple:
         message = request.decode("utf-8")  # request as a string
-        state = message.split(' ')[1]  # get state of the app (True or False)
-        rate = message.split(' ')[3]  # get rate from the previous trial (None or 1-9)
-        participant_id = message.split(' ')[5]  # get rate from the previous trial (None or 1-9)
+        rate = message.split(' ')[1]  # get rate from the previous trial (None or 1-9)
+        participant_id = message.split(' ')[3]  # get rate from the previous trial (None or 1-9)
 
-        state = state == "True"
         if rate == "None":
             rate = None
         else:
             rate = int(rate)
 
-        return (state, rate, participant_id)  # parsed message
+        return (rate, participant_id)  # parsed message
 
     @staticmethod
     def get_participant_path(participant_id):
@@ -268,10 +268,10 @@ def main():
         #  Wait for next request from client
         request = socket.recv()
         print("Received request: %s" % request)  # print request in terminal
-        state, rate, participant_id_ = session.decode_msg(request)
-        print(f'received info: state {state}, rate {rate}, participant_id {participant_id_}')
+        rate, participant_id_ = session.decode_msg(request)
+        print(f'received info: rate {rate}, participant_id {participant_id_}')
 
-        if state or (participant_id_ != session.last_user_id and session.last_user_id is not None):  # request of a new session or typed new participant id
+        if participant_id_ != session.last_user_id and session.last_user_id is not None:  # request of a new session or typed new participant id
             if not session.check_if_participant_exists(participant_id_):
                 session.new_participant(participant_id_)
             else:
