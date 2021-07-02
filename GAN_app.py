@@ -13,13 +13,14 @@ sys.path.append(path_stylegan)
 
 imPth = basePth + 'stimuli/'  # path to dir with participants' folders
 #imPth = r'/analyse/Project0257/'
-init_run = False  # indicate when a session is run for the first time
+init_run = False  # indicates when a session is run for the first time
 initial_user_id = 0
 
+NON_FUNCTIONAL_GRADE = 99
 
 def main():
     global init_run
-    st.title("GAN App")
+    st.title("How good are you at reconstructing famous faces?")
 
     expander = st.sidebar.beta_expander("Enter your participant ID")
     user_id = expander.text_input("Participant ID", initial_user_id)
@@ -38,7 +39,7 @@ def main():
         grades_button_values.append(st.sidebar.button(str(button_val)))
     #option = [i for i in range(grade_range) if grades_button_values[i]][0]
     option = [idx for idx, state in enumerate(grades_button_values) if state]
-    option = option[0] if len(option) else 0
+    option = option[0] if len(option) else NON_FUNCTIONAL_GRADE
 
     if int(user_id) == 0:
         st.image(imPth + r'images/start.png', width=550)
@@ -70,16 +71,15 @@ def main():
         n_generated_samples = int.from_bytes(received[3], "little")  # number of rendered samples (part of threading)
         picture_path = userPth + 'trl_' + str(generation) + '_' + str(trial) + '.png'
         if samples_generated == 'False':  # if new samples are not ready yet
-            st.write(f'Please wait. {trial} samples already generated')
+            st.write(f'Please wait. New samples are being generated: {trial} / 55')
         elif os.path.isfile(picture_path):
             st.write(f'Previous image rated with: {option}')
             st.write(f'Generation: {generation}, Trial: {trial}')
             st.image(userPth + 'trl_' + str(generation) + '_' + str(trial) + '.png', width=550)  # display image
-        else:
-            st.write(f'Hello {user_id}, Click Start to begin experiment')
+ #       else:
+     #       st.write(f'Hello {user_id}, Click Start to begin experiment')
 
     print(f'\n samples ready?: {samples_generated}, trial {trial}')
-#    print(f'generation: {generation}, trial: {trial}')
 
 
 # initialise communication (run only once)

@@ -7,7 +7,6 @@ import os
 import pickle
 from os import walk
 import threading
-from time import sleep
 from random import randint
 
 basePth = r'/home/edytak/Documents/GAN_project/code/'
@@ -20,11 +19,11 @@ import dnnlib.tflib as tflib
 import tensorflow as tf
 from tensorflow.python.keras.backend import set_session
 
-TESTING = True  #
+TESTING = False
 samples_ready = False  # if true: a new generation of samples is ready (needed for threading)
 n_generated_samples = 0  # number of rendered samples for a new generation (needed for threading)
-samples_ready_information_sent = False
-
+samples_ready_information_sent = False  # if true: client was informed about ready samples
+NON_FUNCTIONAL_GRADE = 99
 
 context = zmq.Context()
 context = zmq.Context()
@@ -35,7 +34,7 @@ socket.bind("tcp://*:5555")
 class Server:
     def __init__(self):
         if TESTING:
-            print("TESTING MODE")
+            print('TESTING MODE \n')
             seed = 3004
             self.rnd = np.random.RandomState(seed)
             self.nTrl = 6  # number of trials per generation
@@ -44,10 +43,10 @@ class Server:
             self.nRnd = 2
         else:
             self.rnd = np.random.RandomState()
-            self.nTrl = 50  # number of trials
+            self.nTrl = 55  # number of trials
             self.nGen = 100  # number of generations
-            self.nSurv = 10  # number of best samples that survive the grading process (prob goes to next generation)
-            self.nRnd = 10
+            self.nSurv = 7  # number of best samples that survive the grading process (prob goes to next generation)
+            self.nRnd = 7
 
         self.trial = -1  # current trial
         self.gen = 0  # current generation
@@ -158,6 +157,12 @@ class Server:
 
         # add some random faces to the mix
         thsRnd = np.random.randn(self.nRnd, 512)
+        # mix random samples with survivors (parents)
+        for v in range(len(thsRnd)):
+            parent = np.random.choice(self.nTrl, 1, False, thsFitness)
+            contrib_parent = .25  # contribution of parent sample
+            contrib_random = .75  # contribution of random sample
+            thsRnd[v, :] = self.allZ[parent[0], :] * contrib_parent + thsRnd[v, :] * contrib_random
         parents_random = [(-1, -1, '=') for _ in range(self.nRnd)]
 
         # combine direct survivals and recombined / mutated pool
@@ -278,20 +283,18 @@ def main():
             samples_ready_information_sent = False
 
         elif participant_id_ != '0':
-            print(f"sample ready: {samples_ready} info send {samples_ready_information_sent}")
             if samples_ready:
-                if samples_ready_information_sent:
+                if samples_ready_information_sent and rate != NON_FUNCTIONAL_GRADE:
                     session.rates.append(rate)
+
                 if session.trial == session.nTrl - 1:
                     print('main tf_session', tf.get_default_session())
                     samples_ready = False  # new samples not ready (part of threading)
                     samples_ready_information_sent = False
-                    thread = threading.Thread(target=session.switch_generations, args=(participant_id_,
-                                                                                       session.session,
-                                                                                       session.graph))
+                    thread = threading.Thread(target=session.switch_generations,
+                                              args=(participant_id_, session.session, session.graph))
                     thread.start()
-                    #trial_response, gen_response = n_generated_samples, session.gen
-                elif samples_ready_information_sent:
+                elif samples_ready_information_sent and rate != NON_FUNCTIONAL_GRADE:
                     session.switch_trials()
                     samples_ready_information_sent = True
                 else:
