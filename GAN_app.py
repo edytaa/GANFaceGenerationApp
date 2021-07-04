@@ -5,6 +5,7 @@ import zmq
 import time
 from random import randint
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
+#os.environ["CUDA_VISIBLE_DEVICES"] = str(sys.argv[2])
 from dummy import *
 
 basePth = r'/home/edytak/Documents/GAN_project/code/'
@@ -54,7 +55,6 @@ def main():
         trial = int.from_bytes(received[0], "little")  # bytes to int
         generation = int.from_bytes(received[1], "little")
         samples_generated = received[2].decode("utf-8")
-        n_generated_samples = int.from_bytes(received[3], "little")  # number of rendered samples (part of threading)
         picture_path = userPth + 'trl_' + str(generation) + '_' + str(trial) + '.png'
         if samples_generated == 'False':  # if new samples are not ready yet
             st.write(f'Please wait. New samples are being generated: {trial} / 55')
