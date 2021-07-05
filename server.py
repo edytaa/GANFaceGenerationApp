@@ -23,6 +23,7 @@ from tensorflow.python.keras.backend import set_session
 
 TESTING = True
 NON_FUNCTIONAL_GRADE = 99
+active_thread = False
 
 context = zmq.Context()
 context = zmq.Context()
@@ -30,6 +31,7 @@ socket = context.socket(zmq.REP)
 server_id = sys.argv[1]
 address = r'tcp://*:' + str(server_id)
 socket.bind(address)
+
 
 class SessionInfo:
     def __init__(self, gen=0, trial=-1, allZ=None):
@@ -111,6 +113,9 @@ class Server:
                 pass
         participant_info.pictures_generated = True
         refresher()
+        global active_thread
+        active_thread = False
+
 
     def evaluateOneGeneration(self, participant_info: SessionInfo, wFitterParent_=0.75, mutAmp=.4, mutP=.3):
         """
@@ -133,7 +138,7 @@ class Server:
         thsIndices = np.argsort(thsFitness)
         thsSurv = allZ[thsIndices[-self.nSurv:], :]
         parents_survival = [(p, -1, '>') for p in thsIndices[-self.nSurv:]]
-        print(f'grades: {thsResp} \n thsFitness: {thsFitness} \n thsIndices {thsIndices}, \n parents_survival: {parents_survival} \n\n')
+        print(f'grades: {thsResp} \n thsFitness: {thsFitness} \n thsIndices {thsIndices}, \n parents_survival: {parents_survival}, nTrl: {self.nTrl} \n\n')
 
         # generate recombination from 2 parent latent vectors of current gen
         # w. fitness proportional to probability of being parent
@@ -247,6 +252,7 @@ class Server:
         return gen, trial, allZ
 
     def switch_generations(self, participant_id, participant_info: SessionInfo, session, graph):
+        print(f'switch_generations: id {participant_id}, n_rates: {len(participant_info.rates)}')
         participant_info.n_generated_samples = 0
         Server.save_generation_info(participant_id, participant_info)
         self.evaluateOneGeneration(participant_info)
@@ -256,7 +262,6 @@ class Server:
         self.parents_info = [] # FIXME - remove all parents info
         with graph.as_default():
             with session.as_default():
-                print('switch_generations', tf.get_default_session())
                 self.gen_images(participant_id, participant_info)
 
     @staticmethod
@@ -276,15 +281,18 @@ def refresher():
 def main():
     session = Server()  # initialise class object
     active_sessions = defaultdict(SessionInfo)
+    thread_queue = []  # list of threads waiting to be initialised
+    global active_thread
     while True:
         #  Wait for next request from client
         request = socket.recv()
-        print("Received request: %s" % request)  # print request in terminal
         rate, participant_id_ = session.decode_msg(request)
-        print(f'received info: rate {rate}, participant_id {participant_id_}')
+        if rate != NON_FUNCTIONAL_GRADE:
+            print(f'\n###########\nreceived request with: rate {rate}, participant_id {participant_id_}')
 
         # new / different participant
         if participant_id_ != '0' and participant_id_ not in active_sessions:
+            print("Activate new session")
             if not session.check_if_participant_exists(participant_id_):
                 gen_l, trial_l, allZ_l = session.new_participant(participant_id_)  # initialise a new participant
             else:
@@ -298,18 +306,28 @@ def main():
             active_sessions[participant_id_].pictures_generated_info_send = False
 
         elif participant_id_ != '0':
+            print(f"Continue session (id: {participant_id_}, gen: {active_sessions[participant_id_].current_generation}, "
+                  f"trail: {active_sessions[participant_id_].current_trial})")
             if active_sessions[participant_id_].pictures_generated:
+                # Add rating
                 if active_sessions[participant_id_].pictures_generated_info_send and rate != NON_FUNCTIONAL_GRADE:
                     active_sessions[participant_id_].rates.append(rate)
 
-                if active_sessions[participant_id_].current_trial == session.nTrl - 1:
+                # switch between image generator,
+                if active_sessions[participant_id_].current_trial == session.nTrl - 1 and\
+                        len(active_sessions[participant_id_].rates) == session.nTrl:
                     active_sessions[participant_id_].pictures_generated = False  # new samples not ready (part of threading)
                     active_sessions[participant_id_].pictures_generated_info_send = False
                     thread = threading.Thread(target=session.switch_generations,
                                               args=(participant_id_, active_sessions[participant_id_],
                                                     session.session, session.graph))
-                    thread.start()
-                elif active_sessions[participant_id_].pictures_generated_info_send and rate != NON_FUNCTIONAL_GRADE:
+                    if not active_thread:
+                        active_thread = True
+                        thread.start()
+                    else:
+                        print(f"Add new task to waiting list; id {participant_id_}, n_rates: {len(active_sessions[participant_id_].rates)}")
+                        thread_queue.append(thread)
+                elif active_sessions[participant_id_].pictures_generated_info_send and rate != NON_FUNCTIONAL_GRADE:  # TODO: check if NON_FUNC can go to higher level
                     session.switch_trials(active_sessions[participant_id_])
                     active_sessions[participant_id_].pictures_generated_info_send = True
                 else:
@@ -317,16 +335,23 @@ def main():
                 trial_response = active_sessions[participant_id_].current_trial
             else:
                 trial_response = active_sessions[participant_id_].n_generated_samples
+
+            if not active_thread and len(thread_queue):
+                print(f'number of waiting threads: {len(thread_queue)}')
+                thred_loc = thread_queue.pop(0)
+                active_thread = True
+                thred_loc.start()
+
             gen_response = active_sessions[participant_id_].current_generation
             n_generated_samples = active_sessions[participant_id_].n_generated_samples
             samples_ready = active_sessions[participant_id_].pictures_generated
             samples_ready_information_sent = active_sessions[participant_id_].pictures_generated_info_send
-            print(f"continue... {gen_response} trial: {trial_response}")
         else:
             trial_response, gen_response, n_generated_samples = 0, 0, 0
             samples_ready, samples_ready_information_sent = False, False
 
-        print(f'info send: trial: {trial_response}, gen: {gen_response}, new generation ready?: {samples_ready}, info_send: {samples_ready_information_sent}')
+        if rate != NON_FUNCTIONAL_GRADE:
+            print(f'info send: trial: {trial_response}, gen: {gen_response}, new generation ready?: {samples_ready}, info_send: {samples_ready_information_sent}')
         socket.send_multipart([bytes([trial_response]), bytes([gen_response]),
                                bytes(str(samples_ready), 'utf-8'), bytes([n_generated_samples])])
 
